@@ -1,0 +1,76 @@
+# MLflow produção: PostgreSQL + artefatos em S3/MinIO
+# Requer secrets criados antes do helm install (ver README).
+
+image:
+  repository: ghcr.io/mlflow/mlflow
+  tag: "v3.14.0-full"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+server:
+  value_options:
+    host: "0.0.0.0"
+    port: 5000
+    workers: 4
+    allowed_hosts: "mlflow.mark.local"
+    # Descomente se usar basic-auth:
+    # app_name: "basic-auth"
+  flag_options:
+    - enable_workspaces
+
+mlflow:
+  backendStoreUriFrom:
+    secretKeyRef:
+      name: mlflow-db-secret
+      key: uri
+  defaultArtifactRoot: "s3://mlflow/artifacts"
+  artifactsDestination: "s3://mlflow/artifacts"
+
+env:
+  - name: AWS_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: mlflow-s3-credentials
+        key: access-key-id
+  - name: AWS_SECRET_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: mlflow-s3-credentials
+        key: secret-access-key
+  - name: MLFLOW_S3_ENDPOINT_URL
+    valueFrom:
+      secretKeyRef:
+        name: mlflow-s3-credentials
+        key: endpoint-url
+
+storage:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: mlflow.mark.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+garbageCollection:
+  enabled: true
+  schedule: "0 2 * * 0"
+  olderThan: "30d"
+  allWorkspaces: true
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 2Gi

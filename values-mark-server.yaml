@@ -1,0 +1,54 @@
+# MLflow no cluster on-prem mark-server (192.168.15.56)
+# Chart oficial: https://mlflow.org/docs/latest/self-hosting/kubernetes-helm/
+#
+# Quick start local: SQLite + PVC + NodePort na LAN.
+# Adequado para lab / uso individual. Para multi-usuário, use values-production.yaml.
+
+image:
+  repository: ghcr.io/mlflow/mlflow
+  tag: "v3.14.0-full"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+server:
+  value_options:
+    host: "0.0.0.0"
+    port: 5000
+    workers: 1
+  flag_options: []
+
+mlflow:
+  backendStoreUri: "sqlite:////mlflow/mlflow.db"
+  defaultArtifactRoot: "/mlflow/artifacts"
+  artifactsDestination: "/mlflow/artifacts"
+
+storage:
+  enabled: true
+  size: 20Gi
+  accessMode: ReadWriteOnce
+  storageClassName: "local-storage"
+  mountPath: /mlflow
+
+service:
+  type: NodePort
+  annotations: {}
+
+ingress:
+  enabled: false
+
+metrics:
+  enabled: false
+
+garbageCollection:
+  enabled: true
+  schedule: "0 3 * * 0"
+  olderThan: "30d"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
