@@ -1,6 +1,6 @@
-# MLflow no Kubernetes (mark-server)
+# MLflow no Kubernetes
 
-Deploy do [MLflow Tracking Server](https://mlflow.org/docs/latest/ml/getting-started/running-notebooks/) no cluster on-prem `mark-server` (`https://192.168.15.56:6443`), usando o **chart oficial** do projeto MLflow.
+Deploy do [MLflow Tracking Server](https://mlflow.org/docs/latest/ml/getting-started/running-notebooks/) em um cluster Kubernetes on-premise, usando o **chart oficial** do projeto MLflow.
 
 Documentação do chart: [Kubernetes Helm Deployment](https://mlflow.org/docs/latest/self-hosting/kubernetes-helm/)
 
@@ -12,77 +12,77 @@ Documentação do chart: [Kubernetes Helm Deployment](https://mlflow.org/docs/la
 | `values-mark-server.yaml` | Lab: SQLite + PVC + NodePort |
 | `values-production.yaml` | Produção: PostgreSQL + S3/MinIO + Ingress |
 | `instalar-mlflow.sh` | Script de install/upgrade/status |
-| `pv-mlflow.yaml` | PersistentVolume local (`/mnt/mlflow`) para o cluster mark-server |
+| `pv-mlflow.yaml` | Exemplo de PersistentVolume local (ajuste host/path ao seu cluster) |
 | `testar-mlflow.py` | Smoke test Python (log param + metric) |
 
 ## Pré-requisitos
 
-- Cluster K8s acessível (`kubectl --context mark-server cluster-info`)
+- `kubectl` configurado para o cluster alvo
 - Helm 3.8+
-- API server rodando em `192.168.15.56:6443`
-- StorageClass com provisioner (para o PVC do modo lab)
+- StorageClass compatível com o modo escolhido (lab com PVC local ou provisioner dinâmico)
 
-### Corrigir contexto kubectl
-
-Se `mark-server` falhar com `localhost:8080`, o contexto estava quebrado. Corrija com:
+Variáveis usadas nos exemplos abaixo (ajuste ao seu ambiente):
 
 ```bash
-kubectl config set-context mark-server \
-  --cluster=kubernetes \
-  --user=kubernetes-admin \
-  --namespace=mlflow
+export KUBE_CONTEXT="seu-contexto-kubectl"
+export NODE_IP="ip-do-node-kubernetes"   # ex.: IP do control plane na LAN
 ```
 
 ## Instalação (modo lab — recomendado para começar)
 
 ```bash
-cd /Users/dreis/devops/Gromit/MLFlow
+git clone git@github.com:danilofreytas/MLFlow.git
+cd MLFlow
 
-# PV local (cluster mark-server usa StorageClass local-storage sem provisioner)
-kubectl --context mark-server apply -f pv-mlflow.yaml
+# Se o cluster usa PV estático (sem provisioner), aplique e adapte pv-mlflow.yaml
+kubectl --context "$KUBE_CONTEXT" apply -f pv-mlflow.yaml
 
 chmod +x instalar-mlflow.sh
-./instalar-mlflow.sh install
+KUBE_CONTEXT="$KUBE_CONTEXT" ./instalar-mlflow.sh install
 ```
 
-Se o PVC ficar `Pending` após reinstall, libere o PV:
+Se o PVC ficar `Pending` após reinstall, libere o PV (quando a policy for `Retain`):
 
 ```bash
-kubectl --context mark-server patch pv mlflow-pv -p '{"spec":{"claimRef": null}}'
-kubectl --context mark-server -n mlflow delete pod -l app.kubernetes.io/name=mlflow
+kubectl --context "$KUBE_CONTEXT" patch pv mlflow-pv -p '{"spec":{"claimRef": null}}'
+kubectl --context "$KUBE_CONTEXT" -n mlflow delete pod -l app.kubernetes.io/name=mlflow
 ```
 
-Isso cria o namespace `mlflow`, instala o release `mlflow` e expõe a UI via **NodePort** na LAN.
+Isso cria o namespace `mlflow`, instala o release `mlflow` e expõe a UI via **NodePort**.
 
 ### Acessar a UI
 
-Após o install:
-
 ```bash
-kubectl --context mark-server -n mlflow get svc mlflow-mlflow
+kubectl --context "$KUBE_CONTEXT" -n mlflow get svc mlflow-mlflow
 ```
 
-Abra `http://192.168.15.56:<NODE_PORT>` ou use port-forward:
+Com NodePort:
 
 ```bash
-kubectl --context mark-server -n mlflow port-forward svc/mlflow-mlflow 5000:5000
+NODE_PORT=$(kubectl --context "$KUBE_CONTEXT" -n mlflow get svc mlflow-mlflow -o jsonpath='{.spec.ports[0].nodePort}')
+echo "http://${NODE_IP}:${NODE_PORT}"
+```
+
+Ou via port-forward local:
+
+```bash
+kubectl --context "$KUBE_CONTEXT" -n mlflow port-forward svc/mlflow-mlflow 5000:5000
+# UI: http://127.0.0.1:5000
 ```
 
 ## Testar a aplicação
 
 ```bash
-cd /Users/dreis/devops/Gromit/MLFlow
 python3 -m venv .venv
-.venv/bin/pip install "mlflow>=3.1"
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install "mlflow>=3.1"
 
-NODE_PORT=$(kubectl --context mark-server -n mlflow get svc mlflow-mlflow -o jsonpath='{.spec.ports[0].nodePort}')
-export MLFLOW_TRACKING_URI="http://192.168.15.56:${NODE_PORT}"
-.venv/bin/python testar-mlflow.py
+NODE_PORT=$(kubectl --context "$KUBE_CONTEXT" -n mlflow get svc mlflow-mlflow -o jsonpath='{.spec.ports[0].nodePort}')
+export MLFLOW_TRACKING_URI="http://${NODE_IP}:${NODE_PORT}"
+python testar-mlflow.py
 ```
 
-UI: `http://192.168.15.56:<NODE_PORT>`
-
----
+## Conectar notebooks / scripts Python
 
 Conforme a [documentação de getting started](https://mlflow.org/docs/latest/ml/getting-started/running-notebooks/):
 
@@ -93,7 +93,7 @@ pip install --upgrade "mlflow>=3.1"
 ```python
 import mlflow
 
-mlflow.set_tracking_uri("http://192.168.15.56:<NODE_PORT>")  # ou http://127.0.0.1:5000 com port-forward
+mlflow.set_tracking_uri("http://<NODE_IP>:<NODE_PORT>")  # ou http://127.0.0.1:5000 com port-forward
 mlflow.set_experiment("meu-primeiro-experimento")
 
 with mlflow.start_run():
@@ -105,7 +105,7 @@ with mlflow.start_run():
 Ou via variáveis de ambiente:
 
 ```bash
-export MLFLOW_TRACKING_URI="http://192.168.15.56:<NODE_PORT>"
+export MLFLOW_TRACKING_URI="http://<NODE_IP>:<NODE_PORT>"
 export MLFLOW_EXPERIMENT_NAME="meu-primeiro-experimento"
 ```
 
@@ -114,12 +114,12 @@ export MLFLOW_EXPERIMENT_NAME="meu-primeiro-experimento"
 1. Crie os secrets:
 
 ```bash
-kubectl --context mark-server create namespace mlflow --dry-run=client -o yaml | kubectl apply -f -
+kubectl --context "$KUBE_CONTEXT" create namespace mlflow --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl --context mark-server -n mlflow create secret generic mlflow-db-secret \
+kubectl --context "$KUBE_CONTEXT" -n mlflow create secret generic mlflow-db-secret \
   --from-literal=uri='postgresql://mlflow:SENHA@postgres.mlflow.svc:5432/mlflow'
 
-kubectl --context mark-server -n mlflow create secret generic mlflow-s3-credentials \
+kubectl --context "$KUBE_CONTEXT" -n mlflow create secret generic mlflow-s3-credentials \
   --from-literal=access-key-id='MINIO_ACCESS_KEY' \
   --from-literal=secret-access-key='MINIO_SECRET_KEY' \
   --from-literal=endpoint-url='http://minio.mlflow.svc:9000'
@@ -128,7 +128,7 @@ kubectl --context mark-server -n mlflow create secret generic mlflow-s3-credenti
 2. Instale com os values de produção:
 
 ```bash
-VALUES_FILE=values-production.yaml ./instalar-mlflow.sh install
+KUBE_CONTEXT="$KUBE_CONTEXT" VALUES_FILE=values-production.yaml ./instalar-mlflow.sh install
 ```
 
 > SQLite + PVC **não** é adequado para multi-usuário ou alta concorrência. Use PostgreSQL + object store em produção.
@@ -157,14 +157,15 @@ for x in json.load(sys.stdin):
     urllib.request.urlretrieve(x['download_url'], 'templates/'+x['name'])
 "
 helm lint .
-cp -R /tmp/mlflow-chart-dl/* /Users/dreis/devops/Gromit/MLFlow/chart/
+cp -R /tmp/mlflow-chart-dl/* ./chart/   # execute a partir da raiz do repositório clonado
 ```
 
 ## Troubleshooting
 
 | Sintoma | Causa provável | Ação |
 |---------|----------------|------|
-| `connection refused` em `:6443` | API server do K8s parado | Subir o cluster no host `192.168.15.56` |
+| `connection refused` em `:6443` | API server do K8s parado | Verifique o control plane e o kubelet no node |
 | Pod `Pending` | Sem StorageClass / PVC | `kubectl get sc`; ajuste `storage.storageClassName` |
+| Pod `OOMKilled` | Memória insuficiente | Aumente `resources.limits.memory` e reduza `workers` |
 | HTTP 403 no Ingress | Host não permitido | Defina `server.value_options.allowed_hosts` |
 | `ImagePullBackOff` | Sem acesso ao ghcr.io | Espelhe a imagem ou configure `imagePullSecrets` |
